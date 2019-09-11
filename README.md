@@ -12,9 +12,17 @@ Full credit for this component lies with [michaelmcarthur](https://github.com/mi
 
 ### Installation:
 
-Copy the manifest.json file and place it in <config_dir>/custom_components/google_geocode/manifest.json
+#### HACS
 
-Copy the sensor.py file and place it in <config_dir>/custom_components/google_geocode/sensor.py
+- Ensure that HACS is installed.
+- Search for and install the "Google Geocode HASS" integration.
+- Restart Home Assistant.
+
+#### Manual installation
+
+- Download the latest release.
+- Unpack the release and copy the custom_components/google_geocode directory into the custom_components directory of your Home Assistant installation.
+- Restart Home Assistant.
 
 ### Example Screenshot:
 
