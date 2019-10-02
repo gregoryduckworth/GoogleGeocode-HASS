@@ -53,13 +53,15 @@ image (Optional): A link to an image which if provided, will override `picture` 
 
 api_key (Optional): Your application’s API key (get one by following the instructions below). This key identifies your application for purposes of quota management. Most users will not need to use this unless multiple sensors are created.
 
+scan_interval (Optional): The frequency with which scans occur in seconds, the default is 60.
+
 You need to register for an API key to use Google Geocode. This can be done by following these instructions
 
 - Go to [Google Maps Platform API](https://cloud.google.com/maps-platform/#get-started)
 - Click on 'Get Started'
 - Select 'Maps' and 'Places' then click 'continue'
 - Create a new project or select an existing one then click 'next'.
-- Clcik 'Create Billing Account'
+- Click 'Create Billing Account'
 - Create a name for the account then click 'Continue'
 - Confirm your Country then click 'Confirm'
 - Fill in your detail the click 'Submit and enable billing'
