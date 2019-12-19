@@ -53,6 +53,10 @@ image (Optional): A link to an image which if provided, will override `picture` 
 
 api_key (Optional): Your application’s API key (get one by following the instructions below). This key identifies your application for purposes of quota management. Most users will not need to use this unless multiple sensors are created.
 
+language (Optional): The language with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Language)
+
+region (Optional): The region with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Region)
+
 scan_interval (Optional): The frequency with which scans occur in seconds, the default is 60.
 
 You need to register for an API key to use Google Geocode. This can be done by following these instructions
