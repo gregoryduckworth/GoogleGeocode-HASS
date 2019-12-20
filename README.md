@@ -82,4 +82,6 @@ You need to register for an API key to use Google Geocode. This can be done by f
   display_zone: hide
   gravatar: youremail@address.com
   api_key: XXXX_XXXXX_XXXXX
+  language: en-GB
+  region: GB
 ```
