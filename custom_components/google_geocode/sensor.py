@@ -84,8 +84,6 @@ class GoogleGeocode(Entity):
     """Representation of a Google Geocode Sensor."""
 
     def __init__(self, hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image):
-        _LOGGER.debug("Language - first: " + google_language)
-        _LOGGER.debug("Region - first: " + google_region)
         """Initialize the sensor."""
         self._hass = hass
         self._name = name
@@ -183,9 +181,6 @@ class GoogleGeocode(Entity):
         elif current == self._origin:
             pass
         else:
-            _LOGGER.info("google request sent")
-            _LOGGER.debug("Language:" + self._google_language)
-            _LOGGER.debug("Region:" + self._google_region)
             self._zone_check_current = self.hass.states.get(self._origin_entity_id).state
             zone_check_count = 2
             lat = self._origin
@@ -195,7 +190,7 @@ class GoogleGeocode(Entity):
                 url = "https://maps.google.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat
             else:
                 url = "https://maps.googleapis.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat + "&key=" + self._api_key
-            _LOGGER.debug(url)
+            _LOGGER.debug("Google request sent: " + url)
             response = get(url)
             json_input = response.text
             decoded = json.loads(json_input)
