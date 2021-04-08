@@ -20,7 +20,7 @@ The `google_geocode` sensor converts device tracker location into a human-readab
 The sensor will update the address each time the device tracker location changes. If the device tracker is in a zone it will display the zone.
 
 ### Example Screenshot:
-![alt text](https://github.com/michaelmcarthur/GoogleGeocode-HASS/blob/master/Google_Geocode_Screenshot.png "Screenshot")
+![alt text](https://github.com/gregoryduckworth/GoogleGeocode-HASS/blob/master/Google_Geocode_Screenshot.png "Screenshot")
 
 ### Example entry for configuration.yaml
 ```

@@ -1,7 +1,7 @@
 """
 Support for Google Geocode sensors.
 For more details about this platform, please refer to the documentation at
-https://github.com/michaelmcarthur/GoogleGeocode-HASS
+https://github.com/gregoryduckworth/GoogleGeocode-HASS
 """
 from datetime import datetime
 from datetime import timedelta 
@@ -323,16 +323,12 @@ class GoogleGeocode(Entity):
         return "%s,%s" % (attr.get(ATTR_LATITUDE), attr.get(ATTR_LONGITUDE))
 
     def _get_gravatar_for_email(self, email: str):
-        """Return an 80px Gravatar for the given email address.
-        Async friendly.
-        """
+        """Return an 80px Gravatar for the given email address. Async friendly."""
         import hashlib
         url = 'https://www.gravatar.com/avatar/{}.jpg?s=80&d=wavatar'
         return url.format(hashlib.md5(email.encode('utf-8').lower()).hexdigest())
 
     def _get_image_from_url(self, url: str):
-        """Return an image from a given url.
-        Async friendly.
-        """
+        """Return an image from a given url. Async friendly."""
         import hashlib
         return url.format(hashlib.md5(url.encode('utf-8').lower()).hexdigest())
