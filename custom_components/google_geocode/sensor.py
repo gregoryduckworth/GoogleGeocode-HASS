@@ -191,7 +191,12 @@ class GoogleGeocode(Entity):
             else:
                 url = "https://maps.googleapis.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat + "&key=" + self._api_key
             _LOGGER.debug("Google request sent: " + url)
-            response = get(url)
+            try:
+                response = get(url, timeout=5)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as err:
+                _LOGGER.error("Failed to retrieve geocode from Google. Error: %s", err)
+                return
             json_input = response.text
             decoded = json.loads(json_input)
             street_number = ''
