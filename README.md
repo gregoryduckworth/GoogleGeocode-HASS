@@ -42,25 +42,18 @@ sensor:
 
 ### Configuration variables:
 
-origin (Required): Tracking can be setup to track entity type device_tracker. The component updates it will use the latest location of that entity and update the sensor.
-
-name (Optional): A name to display on the sensor. The default is “Google Geocode"
-
-options (Optional): Select what level of address information you want. Choices are 'street_number', 'street', 'city', 'county', 'state', 'postal_code', 'country' or 'formatted_address'. You can use any combination of these options, separate each option with a comma. The default is “street, city"
-
-display_zone (Optional): Choose to display a zone when in a zone. Choices are 'show' or 'hide'. The default is 'show'
-
-gravatar (Optional): An email address for the device’s owner. You can set up a Gravatar [here.](https://gravatar.com) If provided, it will override `picture` The default is 'none'
-
-image (Optional): A link to an image which if provided, will override `picture` The default is 'none'
-
-api_key (Optional): Your application’s API key (get one by following the instructions below). This key identifies your application for purposes of quota management. Most users will not need to use this unless multiple sensors are created.
-
-language (Optional): The language with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Language)
-
-region (Optional): The region with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Region)
-
-scan_interval (Optional): The frequency with which scans occur in seconds, the default is 60.
+|Name|Required/Optional|Description|
+|----|-----------------|-----------|
+| origin | Required | Tracking can be setup to track entity type device_tracker. The component updates it will use the latest location of that entity and update the sensor. |
+| name | Optional | A name to display on the sensor. The default is “Google Geocode" |
+| options | Optional | Select what level of address information you want. Choices are 'street_number', 'street', 'city', 'county', 'state', 'postal_code', 'country' or 'formatted_address'. You can use any combination of these options, separate each option with a comma. The default is 'street, city' |
+| display_zone | Optional | Choose to display a zone when in a zone. Choices are 'show' or 'hide'. The default is 'show' |
+| gravatar | Optional | An email address for the device’s owner. You can set up a Gravatar [here.](https://gravatar.com) If provided, it will override `picture` The default is 'none' |
+| image | Optional | A link to an image which if provided, will override `picture` The default is 'none' |
+| api_key | Optional | Your application’s API key (get one by following the instructions below). This key identifies your application for purposes of quota management. Most users will not need to use this unless multiple sensors are created. |
+| language | Optional | The language with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Language) |
+| region | Optional | The region with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Region) |
+| scan_interval | Optional | The frequency with which scans occur in seconds, the default is 60. |
 
 You need to register for an API key to use Google Geocode. This can be done by following these instructions
 
