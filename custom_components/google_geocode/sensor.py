@@ -208,6 +208,7 @@ class GoogleGeocode(Entity):
             state = ''
             county = ''
             country = ''
+            postal_code = ''
 
             for result in decoded["results"]:
                 for component in result["address_components"]:
