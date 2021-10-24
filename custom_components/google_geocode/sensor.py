@@ -212,31 +212,40 @@ class GoogleGeocode(Entity):
             for result in decoded["results"]:
                 for component in result["address_components"]:
                     if 'street_number' in component["types"]:
-                        street_number = component["long_name"]
-                        self._street_number = street_number
+                        if street_number == '':
+                            street_number = component["long_name"]
+                            self._street_number = street_number
                     if 'route' in component["types"]:
-                        street = component["long_name"]
-                        self._street = street
+                        if street == 'Unnamed Road':
+                            street = component["long_name"]
+                            self._street = street
                     if 'sublocality_level_1' in component["types"]:
-                        alt_street = component["long_name"]
+                        if alt_street == 'Unnamed Road':
+                            alt_street = component["long_name"]
                     if 'postal_town' in component["types"]:
-                        postal_town = component["long_name"]
-                        self._postal_town = postal_town
+                        if postal_town == '':
+                            postal_town = component["long_name"]
+                            self._postal_town = postal_town
                     if 'locality' in component["types"]:
-                        city = component["long_name"]
-                        self._city = city
+                        if city == '':
+                            city = component["long_name"]
+                            self._city = city
                     if 'administrative_area_level_1' in component["types"]:
-                        state = component["long_name"]
-                        self._region = state
+                        if state == '':
+                            state = component["long_name"]
+                            self._region = state
                     if 'administrative_area_level_2' in component["types"]:
-                        county = component["long_name"]
-                        self._county = county
+                        if county == '':
+                            county = component["long_name"]
+                            self._county = county
                     if 'country' in component["types"]:
-                        country = component["long_name"]
-                        self._country = country
+                        if country == '':
+                            country = component["long_name"]
+                            self._country = country
                     if 'postal_code' in component["types"]:
-                        postal_code = component["long_name"]
-                        self._postal_code = postal_code
+                        if postal_code == '':
+                            postal_code = component["long_name"]
+                            self._postal_code = postal_code
 
             try:
                 if 'formatted_address' in decoded['results'][0]:
