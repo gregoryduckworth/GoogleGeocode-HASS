@@ -3,7 +3,7 @@
   "name": "Google Geocode",
   "documentation": "https://github.com/gregoryduckworth/GoogleGeocode-HASS",
   "issue_tracker": "https://github.com/gregoryduckworth/GoogleGeocode-HASS/issues",
-  "version": "0.1.5",
+  "version": "0.1.8",
   "dependencies": [],
   "codeowners": [],
   "requirements": []
