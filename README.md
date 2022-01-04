@@ -1,7 +1,6 @@
 # Google Geocode
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/custom-components/hacs)
-![release](https://img.shields.io/badge/release-v0.1.5-brightgreen)
 
 This component has been created to be used with Home Assistant.
 
