@@ -184,7 +184,7 @@ class GoogleGeocode(Entity):
         if zone_check == self._zone_check_current and zone_check != 'not_home':    
             return
 
-        self._zone_check_current = self.hass.states.get(self._origin_entity_id).state
+        self._zone_check_current = zone_check
         lat = self._origin
         current = lat
         self._reset_attributes()
