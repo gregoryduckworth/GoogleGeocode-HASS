@@ -164,138 +164,140 @@ class GoogleGeocode(Entity):
         """Update if location has changed."""
 
         global current
-        global zone_check_count
         global zone_check
         global user_display
-        zone_check = self.hass.states.get(self._origin_entity_id).state
-        zone_check_count = 2
 
-        if zone_check == self._zone_check_current:
-            zone_check_count = 1
-        if zone_check == 'not_home':
-            zone_check_count = 2
-        if zone_check_count == 1:
-            pass
-        elif self._origin == None:
-            pass
-        elif current == self._origin:
-            pass
+        # Don't update anyting if no origin location
+        if self._origin is None:
+            return
+
+        # If location is still same then do not update.
+        if current == self._origin:
+            return
+
+        if self.hass.states.get(self._origin_entity_id) is not None:
+            zone_check = self.hass.states.get(self._origin_entity_id).state
+        else: 
+            zone_check = 'not_home'
+
+        # Do not update location if zone is still the same and defined (not not_home)
+        if zone_check == self._zone_check_current and zone_check != 'not_home':    
+            return
+
+        self._zone_check_current = self.hass.states.get(self._origin_entity_id).state
+        lat = self._origin
+        current = lat
+        self._reset_attributes()
+        if self._api_key == 'no key':
+            url = "https://maps.google.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat
         else:
-            self._zone_check_current = self.hass.states.get(self._origin_entity_id).state
-            zone_check_count = 2
-            lat = self._origin
-            current = lat
-            self._reset_attributes()
-            if self._api_key == 'no key':
-                url = "https://maps.google.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat
-            else:
-                url = "https://maps.googleapis.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat + "&key=" + self._api_key
-            _LOGGER.debug("Google request sent: " + url)
-            try:
-                response = get(url, timeout=5)
-                response.raise_for_status()
-            except requests.exceptions.RequestException as err:
-                _LOGGER.error("Failed to retrieve geocode from Google. Error: %s", err)
-                return
-            json_input = response.text
-            decoded = json.loads(json_input)
-            street_number = ''
-            street = 'Unnamed Road'
-            alt_street = 'Unnamed Road'
-            city = ''
-            postal_town = ''
-            formatted_address = ''
-            state = ''
-            county = ''
-            country = ''
-            postal_code = ''
+            url = "https://maps.googleapis.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat + "&key=" + self._api_key
+        _LOGGER.debug("Google request sent: " + url)
+        try:
+            response = get(url, timeout=5)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as err:
+            _LOGGER.error("Failed to retrieve geocode from Google. Error: %s", err)
+            return
+        json_input = response.text
+        decoded = json.loads(json_input)
+        street_number = ''
+        street = 'Unnamed Road'
+        alt_street = 'Unnamed Road'
+        city = ''
+        postal_town = ''
+        formatted_address = ''
+        state = ''
+        county = ''
+        country = ''
+        postal_code = ''
 
-            for result in decoded["results"]:
-                for component in result["address_components"]:
-                    if 'street_number' in component["types"]:
-                        if street_number == '':
-                            street_number = component["long_name"]
-                            self._street_number = street_number
-                    if 'route' in component["types"]:
-                        if street == 'Unnamed Road':
-                            street = component["long_name"]
-                            self._street = street
-                    if 'sublocality_level_1' in component["types"]:
-                        if alt_street == 'Unnamed Road':
-                            alt_street = component["long_name"]
-                    if 'postal_town' in component["types"]:
-                        if postal_town == '':
-                            postal_town = component["long_name"]
-                            self._postal_town = postal_town
-                    if 'locality' in component["types"]:
-                        if city == '':
-                            city = component["long_name"]
-                            self._city = city
-                    if 'administrative_area_level_1' in component["types"]:
-                        if state == '':
-                            state = component["long_name"]
-                            self._region = state
-                    if 'administrative_area_level_2' in component["types"]:
-                        if county == '':
-                            county = component["long_name"]
-                            self._county = county
-                    if 'country' in component["types"]:
-                        if country == '':
-                            country = component["long_name"]
-                            self._country = country
-                    if 'postal_code' in component["types"]:
-                        if postal_code == '':
-                            postal_code = component["long_name"]
-                            self._postal_code = postal_code
-
-            try:
-                if 'formatted_address' in decoded['results'][0]:
-                    formatted_address = decoded['results'][0]['formatted_address']
-                    self._formatted_address = formatted_address
-            except IndexError:
-                pass
-
-            if 'error_message' in decoded:
-                self._state = decoded['error_message']
-                _LOGGER.error("You have exceeded your daily requests or entered a incorrect key please create or check the api key.")
-            elif self._display_zone == 'hide' or zone_check == "not_home":
-                if street == 'Unnamed Road':
-                    street = alt_street
-                    self._street = alt_street
-                if city == '':
-                    city = postal_town
+        for result in decoded["results"]:
+            for component in result["address_components"]:
+                if 'street_number' in component["types"]:
+                    if street_number == '':
+                        street_number = component["long_name"]
+                        self._street_number = street_number
+                if 'route' in component["types"]:
+                    if street == 'Unnamed Road':
+                        street = component["long_name"]
+                        self._street = street
+                if 'sublocality_level_1' in component["types"]:
+                    if alt_street == 'Unnamed Road':
+                        alt_street = component["long_name"]
+                if 'postal_town' in component["types"]:
+                    if postal_town == '':
+                        postal_town = component["long_name"]
+                        self._postal_town = postal_town
+                if 'locality' in component["types"]:
                     if city == '':
-                        city = county
+                        city = component["long_name"]
+                        self._city = city
+                if 'administrative_area_level_1' in component["types"]:
+                    if state == '':
+                        state = component["long_name"]
+                        self._region = state
+                if 'administrative_area_level_2' in component["types"]:
+                    if county == '':
+                        county = component["long_name"]
+                        self._county = county
+                if 'country' in component["types"]:
+                    if country == '':
+                        country = component["long_name"]
+                        self._country = country
+                if 'postal_code' in component["types"]:
+                    if postal_code == '':
+                        postal_code = component["long_name"]
+                        self._postal_code = postal_code
 
-                display_options = self._options
-                user_display = []
+        try:
+            if 'formatted_address' in decoded['results'][0]:
+                formatted_address = decoded['results'][0]['formatted_address']
+                self._formatted_address = formatted_address
+        except IndexError:
+            pass
 
-                if "street_number" in display_options:
-                    user_display.append(street_number)
-                if "street" in display_options:
-                    user_display.append(street)
-                if "city" in display_options:
-                    self._append_to_user_display(city)
-                if "county" in display_options:
-                    self._append_to_user_display(county)
-                if "state" in display_options:
-                    self._append_to_user_display(state)
-                if "postal_town" in display_options:
-                    self._append_to_user_display(postal_town)
-                if "postal_code" in display_options:
-                    self._append_to_user_display(postal_code)
-                if "country" in display_options:
-                    self._append_to_user_display(country)
-                if "formatted_address" in display_options:
-                    self._append_to_user_display(formatted_address)
+        if 'error_message' in decoded:
+            self._state = decoded['error_message']
+            _LOGGER.error("You have exceeded your daily requests or entered a incorrect key please create or check the api key.")
+        elif self._display_zone == 'hide' or zone_check == "not_home":
+            if street == 'Unnamed Road':
+                street = alt_street
+                self._street = alt_street
+            if city == '':
+                city = postal_town
+                if city == '':
+                    city = county
 
-                user_display = ', '.join(  x for x in user_display )
+            display_options = self._options
+            user_display = []
 
-                if user_display == '':
-                    user_display = street
-                self._state = user_display
-            else:
-                self._state = zone_check[0].upper() + zone_check[1:]
+            if "street_number" in display_options:
+                user_display.append(street_number)
+            if "street" in display_options:
+                user_display.append(street)
+            if "city" in display_options:
+                self._append_to_user_display(city)
+            if "county" in display_options:
+                self._append_to_user_display(county)
+            if "state" in display_options:
+                self._append_to_user_display(state)
+            if "postal_town" in display_options:
+                self._append_to_user_display(postal_town)
+            if "postal_code" in display_options:
+                self._append_to_user_display(postal_code)
+            if "country" in display_options:
+                self._append_to_user_display(country)
+            if "formatted_address" in display_options:
+                self._append_to_user_display(formatted_address)
+
+            user_display = ', '.join(  x for x in user_display )
+
+            if user_display == '':
+                user_display = street
+            self._state = user_display
+        else:
+            self._state = zone_check[0].upper() + zone_check[1:]
 
     def _get_location_from_entity(self, entity_id):
         """Get the origin from the entity state or attributes."""
