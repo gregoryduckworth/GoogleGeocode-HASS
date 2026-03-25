@@ -504,3 +504,104 @@ class TestUpdate:
         # Street should have been reset then re-assigned to the fallback 'Unnamed Road'
         # (no route component in the second response, so the fallback applies)
         assert sensor._street == "Unnamed Road"
+
+
+# ---------------------------------------------------------------------------
+# paused_by — polling suppression based on a HA entity state
+# ---------------------------------------------------------------------------
+
+class TestUpdatePausedBy:
+    """Tests for the paused_by feature: skip polling when a designated entity is 'on'."""
+
+    def test_polling_skipped_when_paused_by_entity_is_on(self, make_sensor, hass):
+        """No HTTP request is made when the paused_by entity state is 'on'."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("input_boolean.vacation_mode", "on")
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            paused_by="input_boolean.vacation_mode",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get") as mock_get:
+            sensor.update()
+
+        mock_get.assert_not_called()
+
+    def test_state_unchanged_when_paused(self, make_sensor, hass):
+        """Sensor state is left at awaiting_update when paused."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("input_boolean.vacation_mode", "on")
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            paused_by="input_boolean.vacation_mode",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get"):
+            sensor.update()
+
+        assert sensor._state == STATE_AWAITING_UPDATE
+
+    def test_polling_resumes_when_paused_by_entity_is_off(self, make_sensor, hass):
+        """HTTP request is made when the paused_by entity state is 'off'."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("input_boolean.vacation_mode", "off")
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            paused_by="input_boolean.vacation_mode",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+
+    def test_polling_not_blocked_when_paused_by_entity_missing(self, make_sensor, hass):
+        """When the paused_by entity does not exist in HA, polling is not blocked."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        # 'input_boolean.vacation_mode' is intentionally NOT registered in hass
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            paused_by="input_boolean.vacation_mode",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+
+    def test_no_paused_by_does_not_skip_polling(self, make_sensor, hass):
+        """Default behaviour (no paused_by) is unaffected — polling proceeds normally."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(origin="device_tracker.phone")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+
+    def test_paused_then_resumed_updates_state(self, make_sensor, hass):
+        """After being paused, a sensor resumes geocoding once the entity flips to 'off'."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("input_boolean.vacation_mode", "on")
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street, city",
+            paused_by="input_boolean.vacation_mode",
+        )
+
+        # While paused, no update
+        with patch("custom_components.google_geocode.sensor.requests.get") as mock_get:
+            sensor.update()
+        mock_get.assert_not_called()
+        assert sensor._state == STATE_AWAITING_UPDATE
+
+        # Vacation mode turns off → polling resumes
+        hass.set_state("input_boolean.vacation_mode", "off")
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Downing Street, London"
