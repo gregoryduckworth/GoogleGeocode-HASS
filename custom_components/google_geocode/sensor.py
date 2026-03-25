@@ -3,12 +3,11 @@ Support for Google Geocode sensors.
 For more details about this platform, please refer to the documentation at
 https://github.com/gregoryduckworth/GoogleGeocode-HASS
 """
-from datetime import datetime
-from datetime import timedelta 
+from datetime import timedelta
+import hashlib
 import logging
 import json
 import requests
-from requests import get
 
 import voluptuous as vol
 
@@ -47,8 +46,6 @@ DEFAULT_LANGUAGE = 'en-GB'
 DEFAULT_REGION = 'GB'
 DEFAULT_DISPLAY_ZONE = 'display'
 DEFAULT_KEY = 'no key'
-current = '0,0'
-zone_check = 'a'
 SCAN_INTERVAL = timedelta(seconds=60)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -101,12 +98,15 @@ class GoogleGeocode(Entity):
         self._city = None
         self._postal_town = None
         self._postal_code = None
-        self._city = None
         self._region = None
         self._country = None
         self._county = None
         self._formatted_address = None
         self._zone_check_current = None
+
+        # Instance-level tracking variables (replacing module-level globals)
+        self._current_location = '0,0'
+        self._zone_check = 'a'
 
         # Check if origin is a trackable entity
         if origin.split('.', 1)[0] in TRACKABLE_DOMAINS:
@@ -161,46 +161,45 @@ class GoogleGeocode(Entity):
                 self._origin_entity_id
             )
 
-        """Update if location has changed."""
-
-        global current
-        global zone_check
-        global user_display
-
-        # Don't update anyting if no origin location
+        # Don't update anything if no origin location
         if self._origin is None:
             return
 
-        # If location is still same then do not update.
-        if current == self._origin:
+        # If location is still the same then do not update
+        if self._current_location == self._origin:
             return
 
-        if self.hass.states.get(self._origin_entity_id) is not None:
+        if hasattr(self, '_origin_entity_id') and self.hass.states.get(self._origin_entity_id) is not None:
             zone_check = self.hass.states.get(self._origin_entity_id).state
-        else: 
+        else:
             zone_check = 'not_home'
 
         # Do not update location if zone is still the same and defined (not not_home)
-        if zone_check == self._zone_check_current and zone_check != 'not_home':    
+        if zone_check == self._zone_check_current and zone_check != 'not_home':
             return
 
         self._zone_check_current = zone_check
-        lat = self._origin
-        current = lat
+        self._current_location = self._origin
         self._reset_attributes()
-        if self._api_key == 'no key':
-            url = "https://maps.google.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat
+
+        if self._api_key == DEFAULT_KEY:
+            url = (
+                f"https://maps.google.com/maps/api/geocode/json"
+                f"?language={self._google_language}&region={self._google_region}&latlng={self._origin}"
+            )
         else:
-            url = "https://maps.googleapis.com/maps/api/geocode/json?language=" + self._google_language + "&region=" + self._google_region + "&latlng=" + lat + "&key=" + self._api_key
-        _LOGGER.debug("Google request sent: " + url)
+            url = (
+                f"https://maps.googleapis.com/maps/api/geocode/json"
+                f"?language={self._google_language}&region={self._google_region}&latlng={self._origin}&key={self._api_key}"
+            )
+        _LOGGER.debug("Google request sent: %s", url)
         try:
-            response = get(url, timeout=5)
+            response = requests.get(url, timeout=5)
             response.raise_for_status()
         except requests.exceptions.RequestException as err:
             _LOGGER.error("Failed to retrieve geocode from Google. Error: %s", err)
             return
-        json_input = response.text
-        decoded = json.loads(json_input)
+        decoded = json.loads(response.text)
         street_number = ''
         street = 'Unnamed Road'
         alt_street = 'Unnamed Road'
@@ -259,7 +258,10 @@ class GoogleGeocode(Entity):
 
         if 'error_message' in decoded:
             self._state = decoded['error_message']
-            _LOGGER.error("You have exceeded your daily requests or entered a incorrect key please create or check the api key.")
+            _LOGGER.error(
+                "You have exceeded your daily requests or entered an incorrect key. "
+                "Please create or check the API key."
+            )
         elif self._display_zone == 'hide' or zone_check == "not_home":
             if street == 'Unnamed Road':
                 street = alt_street
@@ -277,25 +279,25 @@ class GoogleGeocode(Entity):
             if "street" in display_options:
                 user_display.append(street)
             if "city" in display_options:
-                self._append_to_user_display(city)
+                self._append_to_user_display(user_display, city)
             if "county" in display_options:
-                self._append_to_user_display(county)
+                self._append_to_user_display(user_display, county)
             if "state" in display_options:
-                self._append_to_user_display(state)
+                self._append_to_user_display(user_display, state)
             if "postal_town" in display_options:
-                self._append_to_user_display(postal_town)
+                self._append_to_user_display(user_display, postal_town)
             if "postal_code" in display_options:
-                self._append_to_user_display(postal_code)
+                self._append_to_user_display(user_display, postal_code)
             if "country" in display_options:
-                self._append_to_user_display(country)
+                self._append_to_user_display(user_display, country)
             if "formatted_address" in display_options:
-                self._append_to_user_display(formatted_address)
+                self._append_to_user_display(user_display, formatted_address)
 
-            user_display = ', '.join(  x for x in user_display )
+            user_display_str = ', '.join(x for x in user_display)
 
-            if user_display == '':
-                user_display = street
-            self._state = user_display
+            if user_display_str == '':
+                user_display_str = street
+            self._state = user_display_str
         else:
             self._state = zone_check[0].upper() + zone_check[1:]
 
@@ -326,11 +328,9 @@ class GoogleGeocode(Entity):
         self._county = None
         self._formatted_address = None
 
-    def _append_to_user_display(self, append_check):
-        """Appends attribute to state if false."""
-        if append_check == "":
-            pass
-        else:
+    def _append_to_user_display(self, user_display, append_check):
+        """Appends attribute to display list if value is not empty."""
+        if append_check:
             user_display.append(append_check)
 
     @staticmethod
@@ -341,11 +341,10 @@ class GoogleGeocode(Entity):
 
     def _get_gravatar_for_email(self, email: str):
         """Return an 80px Gravatar for the given email address. Async friendly."""
-        import hashlib
         url = 'https://www.gravatar.com/avatar/{}.jpg?s=80&d=wavatar'
         return url.format(hashlib.md5(email.encode('utf-8').lower()).hexdigest())
 
-    def _get_image_from_url(self, url: str):
-        """Return an image from a given url. Async friendly."""
-        import hashlib
-        return url.format(hashlib.md5(url.encode('utf-8').lower()).hexdigest())
+    @staticmethod
+    def _get_image_from_url(url: str):
+        """Return the image URL as-is. Async friendly."""
+        return url
