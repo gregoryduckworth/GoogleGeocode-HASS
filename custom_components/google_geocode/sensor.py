@@ -31,6 +31,7 @@ CONF_GRAVATAR = 'gravatar'
 CONF_IMAGE = 'image'
 CONF_GOOGLE_LANGUAGE = 'language'
 CONF_GOOGLE_REGION = 'region'
+CONF_PAUSED_BY = 'paused_by'
 
 # Stable snake_case keys used in extra_state_attributes.  These values are the
 # dict keys returned to HA (automations, templates, etc.) and must never change.
@@ -169,6 +170,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_IMAGE, default=None): vol.Any(None, cv.string),
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Optional(CONF_SCAN_INTERVAL, default=SCAN_INTERVAL): cv.time_period,
+    vol.Optional(CONF_PAUSED_BY, default=None): vol.Any(None, cv.entity_id),
 })
 
 TRACKABLE_DOMAINS = ['device_tracker', 'sensor', 'person']
@@ -183,14 +185,15 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     google_region = config.get(CONF_GOOGLE_REGION)
     display_zone = config.get(CONF_DISPLAY_ZONE)
     gravatar = config.get(CONF_GRAVATAR) 
-    image = config.get(CONF_IMAGE) 
+    image = config.get(CONF_IMAGE)
+    paused_by = config.get(CONF_PAUSED_BY)
 
-    add_devices([GoogleGeocode(hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image)])
+    add_devices([GoogleGeocode(hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by)])
 
 class GoogleGeocode(Entity):
     """Representation of a Google Geocode Sensor."""
 
-    def __init__(self, hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image):
+    def __init__(self, hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by=None):
         """Initialize the sensor."""
         self._hass = hass
         self._name = name
@@ -201,6 +204,7 @@ class GoogleGeocode(Entity):
         self._display_zone = display_zone.lower()
         self._gravatar = gravatar
         self._image = image
+        self._paused_by_entity_id = paused_by
 
         # Load translations for the configured language (falls back to English).
         # Use the already-normalised self._google_language so the lookup is
@@ -292,6 +296,15 @@ class GoogleGeocode(Entity):
     @Throttle(SCAN_INTERVAL)
     def update(self):
         """Get the latest data and updates the states."""
+
+        # Skip polling if a paused_by entity is configured and its state is 'on'
+        if self._paused_by_entity_id is not None:
+            paused_by_state = self._hass.states.get(self._paused_by_entity_id)
+            if paused_by_state is not None and paused_by_state.state == 'on':
+                _LOGGER.debug(
+                    "Polling paused: %s is 'on'", self._paused_by_entity_id
+                )
+                return
 
         if hasattr(self, '_origin_entity_id'):
             self._origin = self._get_location_from_entity(

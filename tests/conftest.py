@@ -76,6 +76,7 @@ def make_sensor(hass):
         display_zone="display",
         gravatar=None,
         image=None,
+        paused_by=None,
     ):
         sensor = GoogleGeocode(
             hass,
@@ -88,6 +89,7 @@ def make_sensor(hass):
             display_zone,
             gravatar,
             image,
+            paused_by,
         )
         sensor.hass = hass
         return sensor

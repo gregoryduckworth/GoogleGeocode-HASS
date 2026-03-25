@@ -53,6 +53,7 @@ sensor:
 | language | Optional | The language with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Language) |
 | region | Optional | The region with which you want to display the results from [Google Maps](https://developers.google.com/maps/documentation/javascript/localization#Region) |
 | scan_interval | Optional | The frequency with which scans occur in seconds, the default is 60. |
+| paused_by | Optional | A Home Assistant entity (e.g. `input_boolean.vacation_mode`) whose state controls whether polling is active. When the entity state is `on`, all geocoding API calls are suspended and the sensor state is left unchanged. Polling resumes automatically as soon as the entity returns to `off`. The default is 'none' |
 
 You need to register for an API key to use Google Geocode. This can be done by following these instructions
 
@@ -80,3 +81,31 @@ You need to register for an API key to use Google Geocode. This can be done by f
   language: en-GB
   region: GB
 ```
+
+### Pausing polling based on a Home Assistant entity
+
+Sometimes you may want to stop the sensor from making Google Maps API calls entirely — for example, when the family is on vacation together and you already know everyone's location.
+
+The optional `paused_by` configuration key accepts any Home Assistant entity ID. When that entity's state is `on`, all geocoding requests are suspended and the sensor state stays at its last known value. As soon as the entity flips back to `off`, polling resumes automatically on the next scan interval.
+
+A common setup is to pair it with an `input_boolean` that you toggle via a switch or automation:
+
+```yaml
+input_boolean:
+  vacation_mode:
+    name: Vacation Mode
+    icon: mdi:beach
+```
+
+Then reference it in your sensor configuration:
+
+```yaml
+sensor:
+  - platform: google_geocode
+    name: michael
+    origin: device_tracker.mobile_phone
+    api_key: XXXX_XXXXX_XXXXX
+    paused_by: input_boolean.vacation_mode
+```
+
+Any entity that exposes an `on`/`off` state works — `input_boolean`, `switch`, `binary_sensor`, and so on.
