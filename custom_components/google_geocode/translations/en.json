@@ -1,0 +1,40 @@
+{
+  "entity": {
+    "sensor": {
+      "google_geocode": {
+        "state": {
+          "awaiting_update": "Awaiting Update"
+        },
+        "state_attributes": {
+          "street_number": {
+            "name": "Street Number"
+          },
+          "street": {
+            "name": "Street"
+          },
+          "city": {
+            "name": "City"
+          },
+          "postal_town": {
+            "name": "Postal Town"
+          },
+          "postal_code": {
+            "name": "Postal Code"
+          },
+          "region": {
+            "name": "State"
+          },
+          "country": {
+            "name": "Country"
+          },
+          "county": {
+            "name": "County"
+          },
+          "formatted_address": {
+            "name": "Formatted Address"
+          }
+        }
+      }
+    }
+  }
+}

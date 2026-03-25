@@ -4,9 +4,11 @@ For more details about this platform, please refer to the documentation at
 https://github.com/gregoryduckworth/GoogleGeocode-HASS
 """
 from datetime import timedelta
+import functools
 import hashlib
 import logging
 import json
+import os
 import requests
 
 import voluptuous as vol
@@ -30,15 +32,22 @@ CONF_IMAGE = 'image'
 CONF_GOOGLE_LANGUAGE = 'language'
 CONF_GOOGLE_REGION = 'region'
 
-ATTR_STREET_NUMBER = 'Street Number'
-ATTR_STREET = 'Street'
-ATTR_CITY = 'City'
-ATTR_POSTAL_TOWN = 'Postal Town'
-ATTR_POSTAL_CODE = 'Postal Code'
-ATTR_REGION = 'State'
-ATTR_COUNTRY = 'Country'
-ATTR_COUNTY = 'County'
-ATTR_FORMATTED_ADDRESS = 'Formatted Address'
+# Stable snake_case keys used in extra_state_attributes.  These values are the
+# dict keys returned to HA (automations, templates, etc.) and must never change.
+# Human-readable labels come from the translation files and are used for UI
+# display only — they do not appear as attribute keys.
+ATTR_STREET_NUMBER = 'street_number'
+ATTR_STREET = 'street'
+ATTR_CITY = 'city'
+ATTR_POSTAL_TOWN = 'postal_town'
+ATTR_POSTAL_CODE = 'postal_code'
+ATTR_REGION = 'region'
+ATTR_COUNTRY = 'country'
+ATTR_COUNTY = 'county'
+ATTR_FORMATTED_ADDRESS = 'formatted_address'
+
+# Translation key used as the sensor's initial state.
+STATE_AWAITING_UPDATE = 'awaiting_update'
 
 DEFAULT_NAME = 'Google Geocode'
 DEFAULT_OPTION = 'street, city'
@@ -47,6 +56,107 @@ DEFAULT_REGION = 'GB'
 DEFAULT_DISPLAY_ZONE = 'display'
 DEFAULT_KEY = 'no key'
 SCAN_INTERVAL = timedelta(seconds=60)
+
+# ---------------------------------------------------------------------------
+# Translations helpers
+#
+# Translation files live in translations/<lang>.json (e.g. translations/fr.json).
+# translations/en.json is the English baseline and the final fallback — there is
+# no separate strings.json; en.json itself serves as the canonical string set.
+# To add a new language, create translations/<lang>.json with the same structure.
+#
+# File lookup is case-insensitive: the directory is scanned once and a map of
+# lowercased stem → actual path is built.  This means pt-BR.json, pt-br.json,
+# and PT-BR.JSON are all found correctly regardless of the OS file-system
+# case-sensitivity, matching the varied naming conventions used by HA translators.
+# ---------------------------------------------------------------------------
+
+_TRANSLATIONS_DIR = os.path.join(os.path.dirname(__file__), "translations")
+
+
+@functools.lru_cache(maxsize=None)
+def _build_translations_index(directory: str) -> dict:
+    """Return a ``{lowercased_stem: absolute_path}`` map for every .json file
+    in *directory*.
+
+    Cached at module scope so the ``os.listdir`` scan is performed at most once
+    per unique *directory* path across all sensor instances and calls.  The
+    first entry wins when two files differ only in case (unlikely in practice).
+    """
+    index: dict[str, str] = {}
+    try:
+        for filename in os.listdir(directory):
+            if filename.lower().endswith('.json'):
+                stem = filename[:-5]          # strip .json
+                key  = stem.lower()
+                if key not in index:          # first entry wins
+                    index[key] = os.path.join(directory, filename)
+    except OSError:
+        pass
+    return index
+
+
+@functools.lru_cache(maxsize=None)
+def _load_translations(language: str) -> dict:
+    """Load the translation file for *language*, falling back to English.
+
+    Cached at module scope so the ``os.listdir`` directory scan and JSON parse
+    happen at most once per unique language string across all sensor instances.
+
+    Candidate stems are tried in order:
+    1. The input as-is, lower-cased          (e.g. ``pt_br``)
+    2. Hyphen-normalised form                (e.g. ``pt-br`` from ``pt_BR``)
+    3. Base-language prefix                  (e.g. ``pt`` from ``pt-BR``)
+    4. ``en``                                (final fallback)
+
+    Each stem is resolved against a case-insensitive index of the translations
+    directory, so ``pt-BR.json``, ``pt-br.json``, and ``PT-BR.JSON`` are all
+    found correctly on case-sensitive file systems.
+    """
+    normalised = language.lower()
+    candidates = [normalised]
+    if '-' in normalised or '_' in normalised:
+        hyphenated = normalised.replace('_', '-')
+        if hyphenated != normalised:
+            candidates.append(hyphenated)
+        candidates.append(hyphenated.split('-')[0])
+    candidates.append('en')
+
+    index = _build_translations_index(_TRANSLATIONS_DIR)
+
+    for stem in candidates:
+        path = index.get(stem)
+        if path:
+            try:
+                with open(path, encoding='utf-8') as fh:
+                    return json.load(fh)
+            except (OSError, json.JSONDecodeError) as err:
+                _LOGGER.warning("Failed to load translations from %s: %s", path, err)
+
+    return {}
+
+
+def _get_state_label(translations: dict, state_key: str) -> str:
+    """Return the human-readable label for *state_key* from *translations*.
+
+    Falls back to title-casing only when *state_key* looks like a snake_case
+    identifier (no spaces, no punctuation other than underscores).  Free-form
+    strings — API error messages, address strings, zone names — are returned
+    exactly as-is so they are never mangled by the title-case transform.
+    """
+    try:
+        return (
+            translations['entity']['sensor']['google_geocode']
+            ['state'][state_key]
+        )
+    except (KeyError, TypeError):
+        # Only apply the cosmetic snake_case → Title Case transform for strings
+        # that look like translation keys (all word-chars / underscores, no
+        # spaces or punctuation).  Everything else is a raw user-facing value
+        # (address string, zone name, API error message) and must be unchanged.
+        if state_key.replace('_', '').isalnum():
+            return state_key.replace('_', ' ').title()
+        return state_key
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_ORIGIN): cv.string,
@@ -64,7 +174,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 TRACKABLE_DOMAINS = ['device_tracker', 'sensor', 'person']
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
-    """Setup the sensor platform."""
+    """Set up the sensor platform."""
     name = config.get(CONF_NAME)
     api_key = config.get(CONF_API_KEY)
     origin = config.get(CONF_ORIGIN)
@@ -89,9 +199,20 @@ class GoogleGeocode(Entity):
         self._google_language = google_language.lower()
         self._google_region = google_region.lower()
         self._display_zone = display_zone.lower()
-        self._state = "Awaiting Update"
         self._gravatar = gravatar
         self._image = image
+
+        # Load translations for the configured language (falls back to English).
+        # Use the already-normalised self._google_language so the lookup is
+        # consistent with the lower-cased value stored on the instance.
+        self._translations = _load_translations(self._google_language)
+
+        # _state holds a stable, language-independent value: either the
+        # STATE_AWAITING_UPDATE key, a raw address string built from the API
+        # response, or a zone name.  Translations are for UI rendering only and
+        # must never be stored here so that automations comparing state strings
+        # work regardless of the configured language.
+        self._state = STATE_AWAITING_UPDATE
 
         self._street_number = None
         self._street = None
@@ -104,7 +225,11 @@ class GoogleGeocode(Entity):
         self._formatted_address = None
         self._zone_check_current = None
 
-        # Instance-level tracking variables (replacing module-level globals)
+        # Instance-level tracking variables (replacing module-level globals).
+        # _current_location guards against re-geocoding the same coordinates.
+        # _zone_check_current guards against re-geocoding the same named zone.
+        # _zone_check is retained for backward-compatibility only and is not
+        # read by any logic.
         self._current_location = '0,0'
         self._zone_check = 'a'
 
@@ -128,8 +253,14 @@ class GoogleGeocode(Entity):
 
     @property
     def state(self):
-        """Return the state of the sensor."""
-        return self._state
+        """Return the state of the sensor.
+
+        Known stable keys (e.g. ``STATE_AWAITING_UPDATE``) are resolved to
+        their translated, human-readable label so the UI and automations always
+        see a localised string.  Address strings and zone names set during
+        ``update()`` are already user-facing and are returned as-is.
+        """
+        return _get_state_label(self._translations, self._state)
 
     @property
     def entity_picture(self):
@@ -138,8 +269,14 @@ class GoogleGeocode(Entity):
 
     @property
     def extra_state_attributes(self):
-        """Return the state attributes."""
-        return{
+        """Return the state attributes.
+
+        Keys are the stable snake_case ``ATTR_*`` identifiers so that
+        automations, template sensors, and other consumers are unaffected by
+        the configured display language.  Translation labels are used only for
+        UI rendering (e.g. the Lovelace card), not as dict keys.
+        """
+        return {
             ATTR_STREET_NUMBER: self._street_number,
             ATTR_STREET: self._street,
             ATTR_CITY: self._city,
@@ -329,7 +466,7 @@ class GoogleGeocode(Entity):
         self._formatted_address = None
 
     def _append_to_user_display(self, user_display, append_check):
-        """Appends attribute to display list if value is not empty."""
+        """Appends a value to the display list if the value is not empty."""
         if append_check:
             user_display.append(append_check)
 

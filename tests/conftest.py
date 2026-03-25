@@ -1,4 +1,5 @@
 """Pytest configuration — installs HA stubs and provides shared fixtures."""
+import json
 import sys
 import os
 import types
@@ -30,20 +31,16 @@ class FakeState:
 
 
 class FakeHass:
-    """Minimal stub for the HA `hass` object."""
+    """Minimal stub for the HA `hass` object.
 
-    def __init__(self):
-        self._states: dict[str, FakeState] = {}
+    Exposes a ``states`` attribute that mimics ``hass.states.get(entity_id)``
+    so that sensor code under test can look up entity states without a real
+    Home Assistant instance.
+    """
 
-    def set_state(self, entity_id: str, state: str, attributes: dict | None = None):
-        self._states[entity_id] = FakeState(state, attributes)
-
-    def states(self):  # noqa: not used directly; access via states.get
-        pass
-
-    # HA code calls `self.hass.states.get(entity_id)`
-    # We expose a `states` namespace-like object.
     class _StatesProxy:
+        """Proxy that forwards ``.get()`` calls to the internal state registry."""
+
         def __init__(self, registry):
             self._registry = registry
 
@@ -128,3 +125,25 @@ ERROR_RESPONSE = {
     "error_message": "The provided API key is invalid.",
     "status": "REQUEST_DENIED",
 }
+
+
+# ---------------------------------------------------------------------------
+# Shared HTTP mock helper
+# ---------------------------------------------------------------------------
+
+def mock_api_response(payload: dict, status_code: int = 200, raise_for_status=None):
+    """Return a mock requests.Response-like object.
+
+    Used by test_sensor.py, test_update.py, and any other test module that
+    needs to simulate a Google Geocode API response without making a real
+    HTTP request.
+    """
+    from unittest.mock import MagicMock
+    mock = MagicMock()
+    mock.text = json.dumps(payload)
+    mock.status_code = status_code
+    if raise_for_status is not None:
+        mock.raise_for_status.side_effect = raise_for_status
+    else:
+        mock.raise_for_status.return_value = None
+    return mock
