@@ -28,7 +28,7 @@ Full credit for this component lies with [michaelmcarthur](https://github.com/mi
 
 ### Example Screenshot:
 
-![alt text](https://github.com/gregoryduckworth/GoogleGeocode-HASS/blob/master/Google_Geocode_Screenshot.png "Screenshot")
+![alt text](https://github.com/gregoryduckworth/GoogleGeocode-HASS/blob/main/Google_Geocode_Screenshot.png "Screenshot")
 
 ### Example entry for configuration.yaml
 
