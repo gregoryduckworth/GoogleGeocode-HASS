@@ -15,6 +15,8 @@ Covers all significant branches of update():
   - URL construction: key vs no key, language/region params, latlng
   - Plain coordinate origin (not a trackable entity)
   - Multiple sensor instances are independent (regression for global vars)
+  - Field ordering via the order= config key
+  - Misspelling / unknown token warnings for order= and options=
 """
 
 from unittest.mock import patch
@@ -27,6 +29,7 @@ from tests.conftest import (
     EMPTY_RESULTS_RESPONSE,
     ERROR_RESPONSE,
     FULL_API_RESPONSE,
+    NO_STREET_NUMBER_RESPONSE,
     mock_api_response,
 )
 
@@ -605,3 +608,460 @@ class TestUpdatePausedBy:
             sensor.update()
 
         assert sensor._state == "Downing Street, London"
+
+
+# ---------------------------------------------------------------------------
+# Field ordering — _parse_order and order config key
+# ---------------------------------------------------------------------------
+
+class TestFieldOrdering:
+    """Tests for the user-configurable field display order feature."""
+
+    # ------------------------------------------------------------------
+    # _parse_order unit tests
+    # ------------------------------------------------------------------
+
+    def test_parse_order_none_returns_none(self, make_sensor):
+        sensor = make_sensor()
+        assert sensor._parse_order(None) is None
+
+    def test_parse_order_empty_string_returns_none(self, make_sensor):
+        sensor = make_sensor()
+        assert sensor._parse_order("") is None
+
+    def test_parse_order_all_unknown_returns_none(self, make_sensor):
+        sensor = make_sensor()
+        assert sensor._parse_order("nonsense, garbage") is None
+
+    def test_parse_order_valid_fields(self, make_sensor):
+        sensor = make_sensor()
+        result = sensor._parse_order("city, street")
+        assert result == ["city", "street"]
+
+    def test_parse_order_resolves_state_alias(self, make_sensor):
+        sensor = make_sensor()
+        result = sensor._parse_order("state")
+        assert result == ["region"]
+
+    def test_parse_order_strips_whitespace(self, make_sensor):
+        sensor = make_sensor()
+        result = sensor._parse_order("  city  ,  country  ")
+        assert result == ["city", "country"]
+
+    def test_parse_order_lowercases_tokens(self, make_sensor):
+        sensor = make_sensor()
+        result = sensor._parse_order("City, Country")
+        assert result == ["city", "country"]
+
+    def test_parse_order_deduplicates(self, make_sensor):
+        sensor = make_sensor()
+        result = sensor._parse_order("city, city, street")
+        assert result == ["city", "street"]
+
+    def test_parse_order_skips_empty_tokens_silently(self, make_sensor, caplog):
+        """Empty tokens from trailing/double commas are skipped without warning.
+
+        order='city,,street,' has two empty tokens (the double comma and the
+        trailing comma); neither should produce a log warning.
+        """
+        import logging
+        sensor = make_sensor()
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = sensor._parse_order("city,,street,")
+        assert result == ["city", "street"]
+        assert caplog.text == ""
+
+    def test_parse_order_drops_unknown_tokens_and_warns(self, make_sensor, caplog):
+        """Unknown tokens are dropped from the result AND a WARNING is emitted.
+
+        The token 'TYPO' is invalid; it must be absent from the returned list
+        and must appear in the log so the user can spot the mistake.
+        """
+        import logging
+        sensor = make_sensor()
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = sensor._parse_order("city, TYPO, country")
+        assert result == ["city", "country"]
+        assert "TYPO" in caplog.text
+        assert "order" in caplog.text
+
+    # ------------------------------------------------------------------
+    # No order specified → default DISPLAY_FIELDS order preserved
+    # ------------------------------------------------------------------
+
+    def test_no_order_uses_default_field_order(self, make_sensor, hass):
+        """Without order= the output matches street then city (default order)."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(origin="device_tracker.phone", options="street, city")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Downing Street, London"
+
+    def test_default_multi_field_order_matches_original_hardcoded_sequence(self, make_sensor, hass):
+        """Regression: DISPLAY_FIELDS order must match the original hard-coded display
+        sequence so existing configs without an explicit order= key are unaffected.
+
+        Original sequence (from pre-DISPLAY_FIELDS code):
+            street_number → street → city → county → region →
+            postal_town → postal_code → country → formatted_address
+
+        This test enables all fields and asserts the exact comma-separated output,
+        locking in the order so any future reordering of DISPLAY_FIELDS is caught.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street_number, street, city, county, region, postal_town, postal_code, country, formatted_address",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == (
+            "10, Downing Street, London, Greater London, England, "
+            "London, SW1A 2AA, United Kingdom, 10 Downing St, London SW1A 2AA, UK"
+        )
+
+
+
+    def test_custom_order_city_before_street(self, make_sensor, hass):
+        """order='city, street' should produce 'London, Downing Street'."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street, city",
+            order="city, street",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "London, Downing Street"
+
+    def test_custom_order_country_first(self, make_sensor, hass):
+        """order='country, city, street' respects the user preference."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street, city, country",
+            order="country, city, street",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "United Kingdom, London, Downing Street"
+
+    def test_order_only_affects_enabled_fields(self, make_sensor, hass):
+        """Fields in order= but NOT in options= are excluded from display."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        # options only enables 'city'; order requests 'country, city, street'
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="city",
+            order="country, city, street",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "London"
+
+    def test_order_with_state_alias(self, make_sensor, hass):
+        """order='state' (alias for region) is resolved correctly."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="state, city",
+            order="state, city",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "England, London"
+
+    def test_order_reversed_state_alias(self, make_sensor, hass):
+        """order='city, state' reverses the default region/city order."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="state, city",
+            order="city, state",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "London, England"
+
+    def test_order_partial_override_unmentioned_fields_appended(self, make_sensor, hass):
+        """Fields enabled in options but absent from order still appear, appended
+        after the explicitly ordered fields in their default DISPLAY_FIELDS sequence.
+
+        Here options enables street, city, country.  order only mentions city.
+        Expected output: city first (as ordered), then street and country in
+        their default relative positions → 'London, Downing Street, United Kingdom'.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street, city, country",
+            order="city",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "London, Downing Street, United Kingdom"
+
+    def test_order_partial_override_preserves_default_sequence_for_remainder(self, make_sensor, hass):
+        """Unmentioned options fields follow the default DISPLAY_FIELDS order,
+        not the order they appeared in options.
+
+        options enables country, street, city (deliberately out of default order).
+        order pins country first.  The remaining two (street, city) must appear
+        in their default relative order (street before city), not in the options
+        declaration order.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="country, street, city",
+            order="country",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "United Kingdom, Downing Street, London"
+
+    def test_init_stores_parsed_order(self, make_sensor):
+        """The constructor parses the order string and stores it on the instance."""
+        sensor = make_sensor(order="city, country")
+        assert sensor._order == ["city", "country"]
+
+    def test_init_stores_none_when_no_order(self, make_sensor):
+        """When order= is not supplied the instance stores None."""
+        sensor = make_sensor()
+        assert sensor._order is None
+
+    # ------------------------------------------------------------------
+    # Warning logs for misspelled / unknown fields
+    # ------------------------------------------------------------------
+
+    def test_parse_order_warns_on_unknown_token(self, make_sensor, caplog):
+        """A misspelled field in order= emits a WARNING and is dropped."""
+        import logging
+        sensor = make_sensor()
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = sensor._parse_order("city, ciyt, country")
+        assert result == ["city", "country"]
+        assert "ciyt" in caplog.text
+        assert "order" in caplog.text
+
+    def test_parse_order_warns_preserves_valid_fields(self, make_sensor, caplog):
+        """Valid fields are kept even when surrounded by invalid ones."""
+        import logging
+        sensor = make_sensor()
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = sensor._parse_order("badfield1, street, badfield2, city")
+        assert result == ["street", "city"]
+        assert "badfield1" in caplog.text
+        assert "badfield2" in caplog.text
+
+    def test_parse_order_no_warning_for_valid_fields(self, make_sensor, caplog):
+        """No warning is emitted when all order= fields are valid."""
+        import logging
+        sensor = make_sensor()
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            sensor._parse_order("city, street, country")
+        assert caplog.text == ""
+
+
+# ---------------------------------------------------------------------------
+# Options parsing — _parse_options and substring-match regression
+# ---------------------------------------------------------------------------
+
+class TestParseOptions:
+    """Tests for _parse_options: token-based parsing, alias resolution, typo handling."""
+
+    def test_parse_options_returns_set_of_canonical_keys(self, make_sensor):
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        result = GoogleGeocode._parse_options("street, city, country")
+        assert result == {"street", "city", "country"}
+
+    def test_parse_options_resolves_state_alias(self, make_sensor):
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        result = GoogleGeocode._parse_options("state, city")
+        assert "region" in result
+        assert "state" not in result
+
+    def test_parse_options_strips_whitespace_and_lowercases(self, make_sensor):
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        result = GoogleGeocode._parse_options("  Street  ,  CITY  ")
+        assert result == {"street", "city"}
+
+    def test_parse_options_drops_unknown_token(self, make_sensor, caplog):
+        import logging
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = GoogleGeocode._parse_options("street, citty, country")
+        assert result == {"street", "country"}
+        assert "citty" in caplog.text
+
+    def test_parse_options_multiple_unknown_tokens_each_warned(self, make_sensor, caplog):
+        """Each unrecognised token generates its own warning."""
+        import logging
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            result = GoogleGeocode._parse_options("sreet, ctiy")
+        assert result == set()
+        assert "sreet" in caplog.text
+        assert "ctiy" in caplog.text
+
+    def test_parse_options_valid_tokens_no_warning(self, make_sensor, caplog):
+        """No warning is emitted when all tokens are valid."""
+        import logging
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            GoogleGeocode._parse_options("street, city, country")
+        assert caplog.text == ""
+
+    def test_parse_options_state_alias_no_warning(self, make_sensor, caplog):
+        """'state' (alias for region) is accepted without a warning."""
+        import logging
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            GoogleGeocode._parse_options("state, city")
+        assert caplog.text == ""
+
+    def test_parse_options_empty_string_returns_empty_set(self, make_sensor):
+        from custom_components.google_geocode.sensor import GoogleGeocode
+        result = GoogleGeocode._parse_options("")
+        assert result == set()
+
+    def test_init_stores_options_set(self, make_sensor):
+        """Constructor populates _options_set from the options string."""
+        sensor = make_sensor(options="street, city")
+        assert sensor._options_set == {"street", "city"}
+
+    def test_init_warns_on_unknown_options_token(self, make_sensor, caplog):
+        """Constructor warns at startup when options= contains an unrecognised token."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            make_sensor(options="street, ciyt")
+        assert "ciyt" in caplog.text
+        assert "options" in caplog.text
+
+    def test_init_no_warning_for_valid_options(self, make_sensor, caplog):
+        """No warning when the options string is fully valid."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="custom_components.google_geocode.sensor"):
+            make_sensor(options="street, city, country")
+        assert caplog.text == ""
+
+
+    # ------------------------------------------------------------------
+    # Substring-match regression tests
+    # ------------------------------------------------------------------
+
+    def test_street_does_not_match_when_only_street_number_in_options(self, make_sensor, hass):
+        """Regression: 'street' must NOT be shown when only 'street_number' is in options.
+
+        With the old substring check, ``'street' in 'street_number'`` was True,
+        causing the street name to bleed into the output even when the user
+        only requested street_number.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street_number",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        # Only the street number (10) should appear, not the street name
+        assert sensor._state == "10"
+
+    def test_street_number_does_not_show_without_street_in_options(self, make_sensor, hass):
+        """When only 'street' is in options, street_number must not appear."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Downing Street"
+        assert "10" not in sensor._state
+
+    def test_county_does_not_match_country_token(self, make_sensor, hass):
+        """'country' option must not cause 'county' to appear.
+
+        With substring matching, ``'count' in 'country'`` would be True if
+        the token loop was reversed; token-set membership prevents this.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="country",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "United Kingdom"
+
+    def test_misspelled_option_produces_no_output_for_that_field(self, make_sensor, hass):
+        """A typo in options= silently drops that field without crashing."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="streeet, city",  # 'streeet' is a typo
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        # Only city should appear; the typo'd field is ignored
+        assert sensor._state == "London"
+
+    def test_street_number_absent_in_response_no_leading_comma(self, make_sensor, hass):
+        """Regression: when street_number is enabled but absent in the API response,
+        the state must not start with a leading ', ' separator.
+
+        Previously, street_number was always appended (even as an empty string)
+        and ', '.join() did not filter falsy entries, producing ', Downing Street'
+        instead of 'Downing Street' when no street_number component was returned.
+        """
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            options="street_number, street, city",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(NO_STREET_NUMBER_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Downing Street, London"
+        assert not sensor._state.startswith(",")

@@ -351,3 +351,48 @@ class TestGetImageFromUrl:
         url = "https://example.com/avatar.jpg?size=80"
         assert GoogleGeocode._get_image_from_url(url) == url
 
+
+# ---------------------------------------------------------------------------
+# _validate_display_zone
+# ---------------------------------------------------------------------------
+
+class TestValidateDisplayZone:
+    def test_display_is_accepted(self):
+        assert GoogleGeocode._validate_display_zone('display') == 'display'
+
+    def test_show_is_normalised_to_display(self):
+        """'show' is a documented alias for 'display' and must be silently normalised."""
+        assert GoogleGeocode._validate_display_zone('show') == 'display'
+
+    def test_hide_is_accepted(self):
+        assert GoogleGeocode._validate_display_zone('hide') == 'hide'
+
+    def test_unknown_value_returns_display_and_warns(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger='custom_components.google_geocode.sensor'):
+            result = GoogleGeocode._validate_display_zone('hide_zone')
+        assert result == 'display'
+        assert 'hide_zone' in caplog.text
+        assert 'display_zone' in caplog.text
+
+    def test_empty_string_returns_display_and_warns(self, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger='custom_components.google_geocode.sensor'):
+            result = GoogleGeocode._validate_display_zone('')
+        assert result == 'display'
+
+    def test_sensor_init_normalises_show_to_display(self, make_sensor):
+        """Sensor stores 'display' when user configures display_zone: show."""
+        sensor = make_sensor(display_zone='show')
+        assert sensor._display_zone == 'display'
+
+    def test_sensor_init_keeps_hide(self, make_sensor):
+        sensor = make_sensor(display_zone='hide')
+        assert sensor._display_zone == 'hide'
+
+    def test_sensor_init_typo_defaults_to_display(self, make_sensor, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING, logger='custom_components.google_geocode.sensor'):
+            sensor = make_sensor(display_zone='hiide')
+        assert sensor._display_zone == 'display'
+        assert 'hiide' in caplog.text

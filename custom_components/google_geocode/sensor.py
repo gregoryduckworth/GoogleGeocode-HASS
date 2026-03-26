@@ -25,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONF_ORIGIN = 'origin'
 CONF_OPTIONS = 'options'
+CONF_ORDER = 'order'
 CONF_DISPLAY_ZONE = 'display_zone'
 CONF_ATTRIBUTION = "Data provided by maps.google.com"
 CONF_GRAVATAR = 'gravatar'
@@ -49,6 +50,32 @@ ATTR_FORMATTED_ADDRESS = 'formatted_address'
 
 # Translation key used as the sensor's initial state.
 STATE_AWAITING_UPDATE = 'awaiting_update'
+
+# Ordered list of field names that can appear in display options.
+# This is used both as validation whitelist and as the default display order
+# when the user does not specify a custom ``order`` config key.
+#
+# ORDER IS SIGNIFICANT and must match the original hard-coded display sequence
+# so that existing configs that rely on the default order are unaffected:
+#   street_number → street → city → county → region → postal_town →
+#   postal_code → country → formatted_address
+# Changing this order is a breaking change for users who enable multiple fields
+# without specifying an explicit ``order`` key.
+DISPLAY_FIELDS = [
+    ATTR_STREET_NUMBER,
+    ATTR_STREET,
+    ATTR_CITY,
+    ATTR_COUNTY,
+    ATTR_REGION,
+    ATTR_POSTAL_TOWN,
+    ATTR_POSTAL_CODE,
+    ATTR_COUNTRY,
+    ATTR_FORMATTED_ADDRESS,
+]
+
+# Alias accepted in ``options`` / ``order`` config values (mirrors the sensor
+# PLATFORM_SCHEMA docs where "state" is the user-facing name for ``region``).
+_OPTIONS_ALIAS = {'state': ATTR_REGION}
 
 DEFAULT_NAME = 'Google Geocode'
 DEFAULT_OPTION = 'street, city'
@@ -163,6 +190,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_ORIGIN): cv.string,
     vol.Optional(CONF_API_KEY, default=DEFAULT_KEY): cv.string,
     vol.Optional(CONF_OPTIONS, default=DEFAULT_OPTION): cv.string,
+    vol.Optional(CONF_ORDER, default=None): vol.Any(None, cv.string),
     vol.Optional(CONF_GOOGLE_LANGUAGE, default=DEFAULT_LANGUAGE): cv.string,
     vol.Optional(CONF_GOOGLE_REGION, default=DEFAULT_REGION): cv.string,
     vol.Optional(CONF_DISPLAY_ZONE, default=DEFAULT_DISPLAY_ZONE): cv.string,
@@ -175,12 +203,13 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 TRACKABLE_DOMAINS = ['device_tracker', 'sensor', 'person']
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
+def setup_platform(hass, config, add_devices, discovery_info=None):  # pragma: no cover
     """Set up the sensor platform."""
     name = config.get(CONF_NAME)
     api_key = config.get(CONF_API_KEY)
     origin = config.get(CONF_ORIGIN)
     options = config.get(CONF_OPTIONS)
+    order = config.get(CONF_ORDER)
     google_language = config.get(CONF_GOOGLE_LANGUAGE)
     google_region = config.get(CONF_GOOGLE_REGION)
     display_zone = config.get(CONF_DISPLAY_ZONE)
@@ -188,12 +217,12 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     image = config.get(CONF_IMAGE)
     paused_by = config.get(CONF_PAUSED_BY)
 
-    add_devices([GoogleGeocode(hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by)])
+    add_devices([GoogleGeocode(hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by, order)])
 
 class GoogleGeocode(Entity):
     """Representation of a Google Geocode Sensor."""
 
-    def __init__(self, hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by=None):
+    def __init__(self, hass, origin, name, api_key, options, google_language, google_region, display_zone, gravatar, image, paused_by=None, order=None):
         """Initialize the sensor."""
         self._hass = hass
         self._name = name
@@ -201,10 +230,25 @@ class GoogleGeocode(Entity):
         self._options = options.lower()
         self._google_language = google_language.lower()
         self._google_region = google_region.lower()
-        self._display_zone = display_zone.lower()
+        self._display_zone = self._validate_display_zone(display_zone.lower())
         self._gravatar = gravatar
         self._image = image
         self._paused_by_entity_id = paused_by
+
+        # Parse and store the user-defined field display order.  Each entry is
+        # normalised to its canonical ATTR_* key (resolving aliases such as
+        # ``state`` → ``region``).  Unknown field names are warned about and
+        # dropped so a typo never breaks the sensor.  None means "use the
+        # default order defined by DISPLAY_FIELDS".
+        self._order = self._parse_order(order)
+
+        # Parse the options string into a set of canonical field tokens so that
+        # update() can use fast O(1) membership tests instead of substring
+        # matching (which would incorrectly match e.g. ``street`` inside
+        # ``street_number``).  Aliases such as ``state`` are resolved to their
+        # canonical form (``region``).  Unknown tokens are warned about and
+        # dropped so a typo never silently breaks the sensor's output.
+        self._options_set = self._parse_options(self._options)
 
         # Load translations for the configured language (falls back to English).
         # Use the already-normalised self._google_language so the lookup is
@@ -421,29 +465,48 @@ class GoogleGeocode(Entity):
                 if city == '':
                     city = county
 
-            display_options = self._options
             user_display = []
 
-            if "street_number" in display_options:
-                user_display.append(street_number)
-            if "street" in display_options:
-                user_display.append(street)
-            if "city" in display_options:
-                self._append_to_user_display(user_display, city)
-            if "county" in display_options:
-                self._append_to_user_display(user_display, county)
-            if "state" in display_options:
-                self._append_to_user_display(user_display, state)
-            if "postal_town" in display_options:
-                self._append_to_user_display(user_display, postal_town)
-            if "postal_code" in display_options:
-                self._append_to_user_display(user_display, postal_code)
-            if "country" in display_options:
-                self._append_to_user_display(user_display, country)
-            if "formatted_address" in display_options:
-                self._append_to_user_display(user_display, formatted_address)
+            # Build a mapping of field key → resolved value so each field can
+            # be looked up by name regardless of the iteration order.
+            field_values = {
+                ATTR_STREET_NUMBER: street_number,
+                ATTR_STREET: street,
+                ATTR_CITY: city,
+                ATTR_POSTAL_TOWN: postal_town,
+                ATTR_POSTAL_CODE: postal_code,
+                ATTR_REGION: state,
+                ATTR_COUNTRY: country,
+                ATTR_COUNTY: county,
+                ATTR_FORMATTED_ADDRESS: formatted_address,
+            }
 
-            user_display_str = ', '.join(x for x in user_display)
+            # Build the iteration order for the enabled fields.
+            #
+            # ``options`` controls *which* fields are shown.
+            # ``order``   controls *how* those fields are sorted.
+            #
+            # When ``order`` is provided we honour the user's sequence for the
+            # fields they listed, then append any *remaining* options-enabled
+            # fields (in the default DISPLAY_FIELDS sequence) that were not
+            # mentioned in ``order`` at all.  This means ``order`` is a
+            # partial override: you can reorder a subset and the rest still
+            # appear rather than being silently dropped.
+            if self._order is not None:
+                ordered_set = set(self._order)
+                iteration_order = self._order + [
+                    f for f in DISPLAY_FIELDS if f not in ordered_set
+                ]
+            else:
+                iteration_order = DISPLAY_FIELDS
+
+            for field in iteration_order:
+                if field not in self._options_set:
+                    continue
+                value = field_values.get(field, '')
+                self._append_to_user_display(user_display, value)
+
+            user_display_str = ', '.join(x for x in user_display if x)
 
             if user_display_str == '':
                 user_display_str = street
@@ -482,6 +545,100 @@ class GoogleGeocode(Entity):
         """Appends a value to the display list if the value is not empty."""
         if append_check:
             user_display.append(append_check)
+
+    @staticmethod
+    def _parse_order(order_str):
+        """Parse a comma-separated order string into a list of canonical field keys.
+
+        Each token is stripped, lower-cased and resolved through ``_OPTIONS_ALIAS``
+        (e.g. ``state`` → ``region``).  Tokens that do not map to a known
+        ``DISPLAY_FIELDS`` entry are logged as a warning and dropped, so a typo
+        never breaks the sensor.  Returns ``None`` when *order_str* is ``None``
+        or empty, which signals that the default ``DISPLAY_FIELDS`` order is used.
+
+        Valid field names: street_number, street, city, postal_town, postal_code,
+        state (alias for region), region, country, county, formatted_address.
+        """
+        if not order_str:
+            return None
+        valid_tokens = set(DISPLAY_FIELDS) | set(_OPTIONS_ALIAS.keys())
+        result = []
+        seen = set()
+        for token in order_str.split(','):
+            raw = token.strip()
+            if not raw:
+                continue
+            key = raw.lower()
+            key = _OPTIONS_ALIAS.get(key, key)
+            if key in DISPLAY_FIELDS:
+                if key not in seen:
+                    result.append(key)
+                    seen.add(key)
+            else:
+                _LOGGER.warning(
+                    "google_geocode: unknown field '%s' in 'order' config — ignored. "
+                    "Valid fields: %s",
+                    raw,
+                    ', '.join(sorted(valid_tokens)),
+                )
+        return result if result else None
+
+    @staticmethod
+    def _parse_options(options_str: str) -> set[str]:
+        """Parse a comma-separated options string into a set of canonical field tokens.
+
+        Each token is stripped, lower-cased and resolved through
+        ``_OPTIONS_ALIAS`` (e.g. ``state`` → ``region``).  Unknown tokens are
+        logged as a warning and dropped so a typo never silently breaks the
+        sensor's displayed output.  The returned set is used by ``update()``
+        for O(1) membership tests, avoiding the substring-matching pitfall
+        where e.g. ``'street'`` would incorrectly match inside
+        ``'street_number'``.
+
+        Valid field names: street_number, street, city, postal_town, postal_code,
+        state (alias for region), region, country, county, formatted_address.
+        """
+        valid_tokens = set(DISPLAY_FIELDS) | set(_OPTIONS_ALIAS.keys())
+        result: set[str] = set()
+        for token in options_str.split(','):
+            raw = token.strip()
+            key = raw.lower()
+            if not key:
+                continue
+            canonical = _OPTIONS_ALIAS.get(key, key)
+            if canonical in DISPLAY_FIELDS:
+                result.add(canonical)
+            else:
+                _LOGGER.warning(
+                    "google_geocode: unknown field '%s' in 'options' config — ignored. "
+                    "Valid fields: %s",
+                    raw,
+                    ', '.join(sorted(valid_tokens)),
+                )
+        return result
+
+    @staticmethod
+    def _validate_display_zone(value: str) -> str:
+        """Normalise and validate the ``display_zone`` config value.
+
+        Accepted values (case-insensitive, already lower-cased by the caller):
+        - ``'display'`` or ``'show'`` (alias) → stored as ``'display'``
+        - ``'hide'``                           → stored as ``'hide'``
+
+        Any other value logs a WARNING and falls back to ``'display'`` so the
+        sensor always has a valid, predictable internal state rather than
+        silently misbehaving on a typo.
+        """
+        if value in ('display', 'show'):
+            return 'display'
+        if value == 'hide':
+            return 'hide'
+        _LOGGER.warning(
+            "google_geocode: unknown 'display_zone' value '%s' — "
+            "expected 'display'/'show' or 'hide'. Defaulting to 'display'.",
+            value,
+        )
+        return 'display'
 
     @staticmethod
     def _get_location_from_attributes(entity):
