@@ -77,6 +77,7 @@ def make_sensor(hass):
         gravatar=None,
         image=None,
         paused_by=None,
+        order=None,
     ):
         sensor = GoogleGeocode(
             hass,
@@ -90,6 +91,7 @@ def make_sensor(hass):
             gravatar,
             image,
             paused_by,
+            order,
         )
         sensor.hass = hass
         return sensor
@@ -121,6 +123,27 @@ FULL_API_RESPONSE = {
 }
 
 EMPTY_RESULTS_RESPONSE = {"results": []}
+
+# Response where no street_number component is present (e.g. a road junction
+# or rural address).  Used to verify that the state is not prefixed with a
+# leading comma when street_number is enabled but absent in the API reply.
+NO_STREET_NUMBER_RESPONSE = {
+    "results": [
+        {
+            "formatted_address": "Downing Street, London SW1A 2AA, UK",
+            "address_components": [
+                {"long_name": "Downing Street", "types": ["route"]},
+                {"long_name": "Westminster", "types": ["sublocality_level_1"]},
+                {"long_name": "London", "types": ["postal_town"]},
+                {"long_name": "London", "types": ["locality"]},
+                {"long_name": "England", "types": ["administrative_area_level_1"]},
+                {"long_name": "Greater London", "types": ["administrative_area_level_2"]},
+                {"long_name": "United Kingdom", "types": ["country"]},
+                {"long_name": "SW1A 2AA", "types": ["postal_code"]},
+            ],
+        }
+    ]
+}
 
 ERROR_RESPONSE = {
     "results": [],

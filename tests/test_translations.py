@@ -107,6 +107,63 @@ class TestLoadTranslations:
 
         assert t['entity']['sensor']['google_geocode']['state']['awaiting_update'] == 'Aguardando'
 
+    def test_build_translations_index_os_error_returns_empty_dict(self):
+        """An OSError from os.listdir must be swallowed and return an empty index."""
+        with patch('os.listdir', side_effect=OSError("permission denied")):
+            result = _build_translations_index('/some/path')
+        assert result == {}
+
+    def test_load_translations_corrupt_json_falls_back_to_english(self):
+        """A JSON-decode error on the primary translation file causes the loader
+        to fall through its candidate list and ultimately return the English
+        translations from en.json.
+        """
+        import os
+        from custom_components.google_geocode.sensor import _TRANSLATIONS_DIR
+
+        en_data = {'entity': {'sensor': {'google_geocode': {'state': {'awaiting_update': 'Awaiting Update'}}}}}
+        en_json = json.dumps(en_data)
+
+        # Provide a fake index so the loader believes fr.json exists, then have
+        # open() return bad JSON for that path and valid JSON for en.json.
+        fake_index = {
+            'fr': os.path.join(_TRANSLATIONS_DIR, 'fr.json'),
+            'en': os.path.join(_TRANSLATIONS_DIR, 'en.json'),
+        }
+
+        def selective_open(path, *args, **kwargs):
+            if 'fr.json' in path:
+                return mock_open(read_data='{ not valid json')()
+            return mock_open(read_data=en_json)()
+
+        # Clear caches immediately before the patch so a cached 'fr' result
+        # from another test (e.g. test_update.py) doesn't bypass the body.
+        _build_translations_index.cache_clear()
+        _load_translations.cache_clear()
+
+        with patch(
+            'custom_components.google_geocode.sensor._build_translations_index',
+            return_value=fake_index,
+        ), patch('builtins.open', side_effect=selective_open):
+            t = _load_translations('fr')
+
+        assert t['entity']['sensor']['google_geocode']['state']['awaiting_update'] == 'Awaiting Update'
+
+    def test_load_translations_no_candidates_found_returns_empty_dict(self):
+        """When no translation file can be found for any candidate (empty index),
+        _load_translations returns an empty dict rather than raising.
+        """
+        _build_translations_index.cache_clear()
+        _load_translations.cache_clear()
+
+        with patch(
+            'custom_components.google_geocode.sensor._build_translations_index',
+            return_value={},
+        ):
+            t = _load_translations('zz-NOTHING')
+
+        assert t == {}
+
 
 # ---------------------------------------------------------------------------
 # _get_state_label

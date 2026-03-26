@@ -33,4 +33,8 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=custom_components.google_geocode.sensor \
+            --cov-report=term-missing \
+            --cov-fail-under=100
