@@ -512,7 +512,14 @@ class GoogleGeocode(Entity):
                 user_display_str = street
             self._state = user_display_str
         else:
-            self._state = zone_check[0].upper() + zone_check[1:]
+            slug_display = zone_check[0].upper() + zone_check[1:] if zone_check else zone_check
+            zone_entity = self.hass.states.get("zone." + zone_check)
+            friendly_name = (
+                zone_entity.attributes.get("friendly_name")
+                if zone_entity is not None
+                else None
+            )
+            self._state = friendly_name if friendly_name else slug_display
 
     def _get_location_from_entity(self, entity_id):
         """Get the origin from the entity state or attributes."""

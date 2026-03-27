@@ -80,6 +80,7 @@ class TestUpdate:
     def test_state_shows_zone_when_in_zone_and_display_not_hidden(self, make_sensor, hass):
         """When device is in a named zone and display_zone is 'display', show zone name."""
         hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        # No zone entity registered → falls back to capitalised slug "Home".
         sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
 
         with patch("custom_components.google_geocode.sensor.requests.get",
@@ -90,6 +91,7 @@ class TestUpdate:
 
     def test_zone_state_is_title_cased(self, make_sensor, hass):
         hass.set_state("device_tracker.phone", "work", {"latitude": 51.5, "longitude": -0.12})
+        # No zone entity registered → falls back to capitalised slug "Work".
         sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
 
         with patch("custom_components.google_geocode.sensor.requests.get",
@@ -97,6 +99,95 @@ class TestUpdate:
             sensor.update()
 
         assert sensor._state == "Work"
+
+    def test_state_uses_zone_friendly_name_when_available(self, make_sensor, hass):
+        """Zone friendly_name is used instead of the raw slug when present."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("zone.home", "zoning", {"friendly_name": "Zu Hause"})
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Zu Hause"
+
+    def test_state_uses_zone_friendly_name_for_custom_zone(self, make_sensor, hass):
+        """friendly_name is resolved for non-home zones too."""
+        hass.set_state("device_tracker.phone", "work", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("zone.work", "zoning", {"friendly_name": "Das Büro"})
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Das Büro"
+
+    def test_state_falls_back_to_slug_when_zone_entity_missing(self, make_sensor, hass):
+        """No zone.* entity → update() stores only the first character uppercased.
+
+        This test asserts the raw ``_state`` value written by ``update()``, not
+        the public ``state`` property.  For a slug like ``my_zone`` there are
+        two layers:
+
+          1. ``update()`` stores ``'My_zone'`` (first char uppercased, rest
+             unchanged) in ``self._state``.
+          2. The public ``state`` property then passes that through
+             ``_get_state_label``, which recognises the snake_case shape and
+             converts it to ``'My Zone'`` (title-cased, underscores → spaces)
+             for the UI.
+
+        Here we only test layer 1 — the invariant that ``update()`` does not
+        apply title-casing itself.  Layer 2 is covered by
+        ``test_state_property_passes_through_zone_with_underscores_unchanged``
+        in ``test_sensor.py``.
+        """
+        hass.set_state("device_tracker.phone", "my_zone", {"latitude": 51.5, "longitude": -0.12})
+        # Intentionally do NOT register zone.my_zone in hass.
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "My_zone"
+
+    def test_state_falls_back_to_slug_when_friendly_name_absent(self, make_sensor, hass):
+        """Zone entity exists but has no friendly_name → capitalised slug used."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("zone.home", "zoning", {})  # no friendly_name key
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Home"
+
+    def test_state_falls_back_to_slug_when_friendly_name_is_none(self, make_sensor, hass):
+        """Zone entity has friendly_name=None → must not set state to None."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("zone.home", "zoning", {"friendly_name": None})
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Home"
+
+    def test_state_falls_back_to_slug_when_friendly_name_is_empty_string(self, make_sensor, hass):
+        """Zone entity has friendly_name='' → must not set state to empty string."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        hass.set_state("zone.home", "zoning", {"friendly_name": ""})
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Home"
 
     # ------------------------------------------------------------------
     # Zone hidden / not_home — address built from API response
