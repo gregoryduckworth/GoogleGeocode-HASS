@@ -19,7 +19,8 @@ Covers all significant branches of update():
   - Misspelling / unknown token warnings for order= and options=
 """
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
 import requests
 
 # conftest.py inserts stubs onto sys.path before this module is imported.
@@ -1202,6 +1203,29 @@ class TestParseOptions:
         assert sensor._state == "Downing Street, London"
         assert sensor._current_location == "51.5,-0.12"
         assert sensor._zone_check_current == "not_home"
+
+    def test_update_handles_invalid_json(self, make_sensor, hass):
+        """Invalid JSON responses should not crash or cache the location."""
+        hass.set_state(
+            "device_tracker.phone",
+            "not_home",
+            {"latitude": 51.5, "longitude": -0.12},
+        )
+        sensor = make_sensor(origin="device_tracker.phone")
+
+        bad_response = Mock()
+        bad_response.raise_for_status.return_value = None
+        bad_response.text = "THIS IS NOT JSON"
+
+        with patch(
+                "custom_components.google_geocode.sensor.requests.get",
+                return_value=bad_response,
+        ):
+            sensor.update()
+
+        assert sensor._state == STATE_AWAITING_UPDATE
+        assert sensor._current_location == "0,0"
+        assert sensor._zone_check_current is None
 
     def test_display_zone_hide_updates_address_in_same_named_zone(self, make_sensor, hass):
         """When zones are hidden, changed coordinates in the same zone need geocoding."""
