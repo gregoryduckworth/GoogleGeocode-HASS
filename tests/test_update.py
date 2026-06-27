@@ -20,6 +20,7 @@ Covers all significant branches of update():
 """
 
 from unittest.mock import patch
+import requests
 
 # conftest.py inserts stubs onto sys.path before this module is imported.
 from custom_components.google_geocode.sensor import (
@@ -1156,3 +1157,73 @@ class TestParseOptions:
 
         assert sensor._state == "Downing Street, London"
         assert not sensor._state.startswith(",")
+
+    def test_update_when_zone_changes_with_same_location(self, make_sensor, hass):
+        """A zone state change must update even if coordinates are unchanged."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(origin="device_tracker.phone", display_zone="display")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Home"
+        assert sensor._current_location == "51.5,-0.12"
+        assert sensor._zone_check_current == "home"
+
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+        assert sensor._state == "Downing Street, London"
+        assert sensor._zone_check_current == "not_home"
+
+    def test_failed_request_does_not_cache_location(self, make_sensor, hass):
+        """A failed request should be retried on the next update for the same location."""
+        hass.set_state("device_tracker.phone", "not_home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(origin="device_tracker.phone")
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   side_effect=requests.exceptions.Timeout):
+            sensor.update()
+
+        assert sensor._state == STATE_AWAITING_UPDATE
+        assert sensor._current_location == "0,0"
+        assert sensor._zone_check_current is None
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+        assert sensor._state == "Downing Street, London"
+        assert sensor._current_location == "51.5,-0.12"
+        assert sensor._zone_check_current == "not_home"
+
+    def test_display_zone_hide_updates_address_in_same_named_zone(self, make_sensor, hass):
+        """When zones are hidden, changed coordinates in the same zone need geocoding."""
+        hass.set_state("device_tracker.phone", "home", {"latitude": 51.5, "longitude": -0.12})
+        sensor = make_sensor(
+            origin="device_tracker.phone",
+            display_zone="hide",
+            options="street, city",
+        )
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)):
+            sensor.update()
+
+        assert sensor._state == "Downing Street, London"
+        assert sensor._zone_check_current == "home"
+
+        hass.set_state("device_tracker.phone", "home", {"latitude": 52.0, "longitude": -0.13})
+
+        with patch("custom_components.google_geocode.sensor.requests.get",
+                   return_value=mock_api_response(FULL_API_RESPONSE)) as mock_get:
+            sensor.update()
+
+        mock_get.assert_called_once()
+        assert sensor._current_location == "52.0,-0.13"
