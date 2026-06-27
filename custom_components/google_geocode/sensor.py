@@ -367,12 +367,9 @@ class GoogleGeocode(Entity):
         # If the location is unchanged, skip unless we know the zone changed.
         # A missing cached zone keeps the previous behavior for already cached
         # locations while still allowing explicit zone changes to update.
-        if (
-                self._current_location == self._origin
-                and (
+        if self._current_location == self._origin and (
                 self._zone_check_current is None
                 or zone_check == self._zone_check_current
-                )
         ):
             return
 
