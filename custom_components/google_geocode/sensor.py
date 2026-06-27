@@ -359,22 +359,31 @@ class GoogleGeocode(Entity):
         if self._origin is None:
             return
 
-        # If location is still the same then do not update
-        if self._current_location == self._origin:
-            return
-
         if hasattr(self, '_origin_entity_id') and self.hass.states.get(self._origin_entity_id) is not None:
             zone_check = self.hass.states.get(self._origin_entity_id).state
         else:
             zone_check = 'not_home'
 
-        # Do not update location if zone is still the same and defined (not not_home)
-        if zone_check == self._zone_check_current and zone_check != 'not_home':
+        # If the location is unchanged, skip unless we know the zone changed.
+        # A missing cached zone keeps the previous behavior for already cached
+        # locations while still allowing explicit zone changes to update.
+        if (
+                self._current_location == self._origin
+                and (
+                self._zone_check_current is None
+                or zone_check == self._zone_check_current
+                )
+        ):
             return
 
-        self._zone_check_current = zone_check
-        self._current_location = self._origin
-        self._reset_attributes()
+        # Do not update location if the entity is still in the same named zone,
+        # unless the user requested address display instead of zone display.
+        if (
+                zone_check == self._zone_check_current
+                and zone_check != 'not_home'
+                and self._display_zone != 'hide'
+        ):
+            return
 
         if self._api_key == DEFAULT_KEY:
             url = (
@@ -387,13 +396,22 @@ class GoogleGeocode(Entity):
                 f"?language={self._google_language}&region={self._google_region}&latlng={self._origin}&key={self._api_key}"
             )
         _LOGGER.debug("Google request sent: %s", url)
+
         try:
             response = requests.get(url, timeout=5)
             response.raise_for_status()
+            decoded = json.loads(response.text)
         except requests.exceptions.RequestException as err:
             _LOGGER.error("Failed to retrieve geocode from Google. Error: %s", err)
             return
-        decoded = json.loads(response.text)
+        except (json.JSONDecodeError, TypeError) as err:
+            _LOGGER.error("Failed to decode geocode response from Google. Error: %s", err)
+            return
+
+        self._zone_check_current = zone_check
+        self._current_location = self._origin
+        self._reset_attributes()
+
         street_number = ''
         street = 'Unnamed Road'
         alt_street = 'Unnamed Road'
